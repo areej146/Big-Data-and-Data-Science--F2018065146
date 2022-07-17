@@ -1,0 +1,162 @@
+# Databricks notebook source
+from pyspark.context import SparkContext
+ 
+# COMMAND ----------
+ 
+sc=SparkContext.getOrCreate()
+ 
+# COMMAND ----------
+ 
+ 
+#Load the CSV file into a RDD
+irisData = sc.textFile("/FileStore/tables/iris.csv")
+irisData.persist()
+ 
+ 
+# COMMAND ----------
+ 
+#Remove the first line (contains headers)
+dataLines = irisData.filter(lambda x: "Sepal" not in x)
+dataLines.count()
+ 
+# COMMAND ----------
+ 
+#Convert the RDD into a Dense Vector. As a part of this exercise
+import math
+from pyspark.ml.linalg import Vectors, VectorUDT
+#from pyspark.ml.linalg import Vectors
+ 
+# COMMAND ----------
+ 
+# Change labels to numeric ones
+ 
+def transformToNumeric( inputStr) :
+    attList=inputStr.split(",")
+    
+    #Set default to setosa
+    irisValue=1.0
+    if attList[4] == "versicolor":
+        irisValue=2.0
+    if attList[4] == "virginica":
+        irisValue=3.0
+       
+    #Filter out columns not wanted at this stage
+    values= Vectors.dense([ irisValue, \
+                     float(attList[0]),  \
+                     float(attList[1]),  \
+                     float(attList[2]),  \
+                     float(attList[3])  \
+                     ])
+    return values
+ 
+# COMMAND ----------
+ 
+#Change to a Vector
+irisVectors = dataLines.map(transformToNumeric)
+irisVectors.collect()
+ 
+# COMMAND ----------
+ 
+#Perform statistical Analysis
+#from pyspark.ml.stat import Statistics
+#irisStats=Statistics.colStats(irisVectors)
+ 
+# COMMAND ----------
+ 
+#irisStats.mean()
+ 
+# COMMAND ----------
+ 
+#irisStats.variance()
+ 
+# COMMAND ----------
+ 
+#irisStats.min()
+ 
+# COMMAND ----------
+ 
+#irisStats.max()
+ 
+# COMMAND ----------
+ 
+#Statistics.corr(irisVectors)
+ 
+# COMMAND ----------
+ 
+#Transform to a Data Frame for input to Machine Learing
+#Drop columns that are not required (low correlation)
+ 
+from pyspark.sql import SQLContext
+sqlContext = SQLContext(sc)
+ 
+def transformToLabeledPoint(inStr) :
+    attList=inStr.split(",")
+    lp = ( attList[4], Vectors.dense([attList[0],attList[2],attList[3]]))
+    return lp
+ 
+# COMMAND ----------
+ 
+irisLp = dataLines.map(transformToLabeledPoint)
+irisDF = sqlContext.createDataFrame(irisLp,["label", "features"])
+irisDF.select("label","features").show(10)
+ 
+# COMMAND ----------
+ 
+#Indexing needed as pre-req for Decision Trees
+from pyspark.ml.feature import StringIndexer
+stringIndexer = StringIndexer(inputCol="label", outputCol="indexed")
+si_model = stringIndexer.fit(irisDF)
+td = si_model.transform(irisDF)
+td.collect()
+ 
+# COMMAND ----------
+ 
+ 
+#Split into training and testing data
+(trainingData, testData) = td.randomSplit([0.9, 0.1])
+trainingData.count()
+testData.count()
+testData.collect()
+ 
+# COMMAND ----------
+ 
+from pyspark.ml.classification import DecisionTreeClassifier
+from pyspark.ml.evaluation import MulticlassClassificationEvaluator
+from pyspark.ml.linalg import Vectors, VectorUDT
+#from pyspark.ml.linalg import Vectors as MLLibVectors
+#from pyspark.ml.linalg import VectorUDT
+#from pyspark.sql.functions import udf
+ 
+ 
+# COMMAND ----------
+ 
+#Create the model
+dtClassifer = DecisionTreeClassifier(maxDepth=2, labelCol="indexed")
+dtModel = dtClassifer.fit(trainingData)
+dtModel.numNodes
+dtModel.depth
+ 
+ 
+# COMMAND ----------
+ 
+#Predict on the test data
+predictions = dtModel.transform(trainingData)
+ 
+ 
+# COMMAND ----------
+ 
+predictions.select("prediction","indexed","label","features").collect()
+ 
+# COMMAND ----------
+ 
+evaluator = MulticlassClassificationEvaluator(predictionCol="prediction",labelCol="indexed")
+evaluator.evaluate(predictions)
+ 
+# COMMAND ----------
+ 
+#Draw a confusion matrix
+labelList=predictions.select("indexed","label").distinct().toPandas()
+predictions.groupBy("indexed","prediction").count().show()
+ 
+ 
+# COMMAND ----------

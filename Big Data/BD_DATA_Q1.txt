@@ -1,0 +1,149 @@
+from pyspark import SparkContext, SparkConf
+ 
+#PySpark requires the same minor version of Python in both driver and workers. It uses the default python version in PATH, you can specify which version of Python you want to use by PYSPARK_PYTHON, for example:
+ 
+$ PYSPARK_PYTHON=python3.4 bin/pyspark
+$ PYSPARK_PYTHON=/opt/pypy-2.5/bin/pypy bin/spark-submit examples/src/main/python/pi.py
+ 
+#Initializing Spark
+ 
+conf = SparkConf().setAppName(appName).setMaster(master)
+sc = SparkContext(conf=conf)
+ 
+#Using the Shell
+ 
+$ ./bin/pyspark --master local[4]
+#Or, to also add code.py to the search path (in order to later be able to import code), use:
+ 
+$ ./bin/pyspark --master local[4] --py-files code.py
+ 
+#It is also possible to launch the PySpark shell in IPython, the enhanced Python interpreter. PySpark works with IPython 1.0.0 and later. To use IPython, set the PYSPARK_DRIVER_PYTHON variable to ipython when running bin/pyspark:
+ 
+$ PYSPARK_DRIVER_PYTHON=ipython ./bin/pyspark
+ 
+ 
+$ PYSPARK_DRIVER_PYTHON=jupyter PYSPARK_DRIVER_PYTHON_OPTS=notebook ./bin/pyspark
+ 
+ 
+#Resilient Distributed Datasets (RDDs)
+ 
+#Parallelized Collections
+ 
+data = [1, 2, 3, 4, 5]
+distData = sc.parallelize(data)
+ 
+#External Datasets
+ 
+>>> distFile = sc.textFile("data.txt")
+ 
+#Saving and Loading SequenceFiles
+ 
+#Similarly to text files, SequenceFiles can be saved and loaded by specifying the path. The key and value classes can be specified, but for standard Writables this is not required.
+ 
+>>> rdd = sc.parallelize(range(1, 4)).map(lambda x: (x, "a" * x))
+>>> rdd.saveAsSequenceFile("path/to/file")
+>>> sorted(sc.sequenceFile("path/to/file").collect())
+[(1, u'a'), (2, u'aa'), (3, u'aaa')]
+ 
+$ ./bin/pyspark --jars /path/to/elasticsearch-hadoop.jar
+>>> conf = {"es.resource" : "index/type"}  # assume Elasticsearch is running on localhost defaults
+>>> rdd = sc.newAPIHadoopRDD("org.elasticsearch.hadoop.mr.EsInputFormat",
+                             "org.apache.hadoop.io.NullWritable",
+                             "org.elasticsearch.hadoop.mr.LinkedMapWritable",
+                             conf=conf)
+>>> rdd.first()  # the result is a MapWritable that is converted to a Python dict
+(u'Elasticsearch ID',
+ {u'field1': True,
+  u'field2': u'Some Text',
+  u'field3': 12345})
+ 
+#Basics
+ 
+lines = sc.textFile("data.txt")
+lineLengths = lines.map(lambda s: len(s))
+totalLength = lineLengths.reduce(lambda a, b: a + b)
+lineLengths.persist()
+ 
+#Passing Functions to Spark
+ 
+if __name__ == "__main__":
+    def myFunc(s):
+        words = s.split(" ")
+        return len(words)
+ 
+    sc = SparkContext(...)
+    sc.textFile("file.txt").map(myFunc)
+ 
+ 
+class MyClass(object):
+    def func(self, s):
+        return s
+    def doStuff(self, rdd):
+        return rdd.map(self.func)
+ 
+class MyClass(object):
+    def __init__(self):
+        self.field = "Hello"
+    def doStuff(self, rdd):
+        return rdd.map(lambda s: self.field + s)
+ 
+ 
+def doStuff(self, rdd):
+    field = self.field
+    return rdd.map(lambda s: field + s)
+ 
+counter = 0
+rdd = sc.parallelize(data)
+ 
+# Wrong: Don't do this!!
+def increment_counter(x):
+    global counter
+    counter += x
+rdd.foreach(increment_counter)
+ 
+print("Counter value: ", counter)
+ 
+#Working with Key-Value Pairs
+ 
+lines = sc.textFile("data.txt")
+pairs = lines.map(lambda s: (s, 1))
+counts = pairs.reduceByKey(lambda a, b: a + b)
+ 
+#Broadcast Variables
+ 
+>>> broadcastVar = sc.broadcast([1, 2, 3])
+<pyspark.broadcast.Broadcast object at 0x102789f10>
+ 
+>>> broadcastVar.value
+[1, 2, 3]
+ 
+ 
+>>> accum = sc.accumulator(0)
+>>> accum
+Accumulator<id=0, value=0>
+ 
+>>> sc.parallelize([1, 2, 3, 4]).foreach(lambda x: accum.add(x))
+...
+10/09/29 18:41:08 INFO SparkContext: Tasks finished in 0.317106 s
+ 
+>>> accum.value
+10
+ 
+ 
+class VectorAccumulatorParam(AccumulatorParam):
+    def zero(self, initialValue):
+        return Vector.zeros(initialValue.size)
+ 
+    def addInPlace(self, v1, v2):
+        v1 += v2
+        return v1
+ 
+# Then, create an Accumulator of this type:
+vecAccum = sc.accumulator(Vector(...), VectorAccumulatorParam())
+ 
+accum = sc.accumulator(0)
+def g(x):
+    accum.add(x)
+    return f(x)
+data.map(g)
+# Here, accum is still 0 because no actions have caused the `map` to be computed.

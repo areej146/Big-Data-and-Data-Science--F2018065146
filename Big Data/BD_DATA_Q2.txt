@@ -1,0 +1,581 @@
+#Starting Point: SparkSession
+ 
+from pyspark.sql import SparkSession
+ 
+spark = SparkSession \
+    .builder \
+    .appName("Python Spark SQL basic example") \
+    .config("spark.some.config.option", "some-value") \
+    .getOrCreate()
+ 
+#Creating DataFrames
+ 
+# spark is an existing SparkSession
+df = spark.read.json("examples/src/main/resources/people.json")
+# Displays the content of the DataFrame to stdout
+df.show()
+# +----+-------+
+# | age|   name|
+# +----+-------+
+# |null|Michael|
+# |  30|   Andy|
+# |  19| Justin|
+# +----+-------+
+ 
+# spark, df are from the previous example
+# Print the schema in a tree format
+df.printSchema()
+# root
+# |-- age: long (nullable = true)
+# |-- name: string (nullable = true)
+ 
+# Select only the "name" column
+df.select("name").show()
+# +-------+
+# |   name|
+# +-------+
+# |Michael|
+# |   Andy|
+# | Justin|
+# +-------+
+ 
+# Select everybody, but increment the age by 1
+df.select(df['name'], df['age'] + 1).show()
+# +-------+---------+
+# |   name|(age + 1)|
+# +-------+---------+
+# |Michael|     null|
+# |   Andy|       31|
+# | Justin|       20|
+# +-------+---------+
+ 
+# Select people older than 21
+df.filter(df['age'] > 21).show()
+# +---+----+
+# |age|name|
+# +---+----+
+# | 30|Andy|
+# +---+----+
+ 
+# Count people by age
+df.groupBy("age").count().show()
+# +----+-----+
+# | age|count|
+# +----+-----+
+# |  19|    1|
+# |null|    1|
+# |  30|    1|
+# +----+-----+
+ 
+ 
+#Running SQL Queries Programmatically
+ 
+# Register the DataFrame as a SQL temporary view
+df.createOrReplaceTempView("people")
+ 
+sqlDF = spark.sql("SELECT * FROM people")
+sqlDF.show()
+# +----+-------+
+# | age|   name|
+# +----+-------+
+# |null|Michael|
+# |  30|   Andy|
+# |  19| Justin|
+# +----+-------+
+ 
+#Global Temporary View
+ 
+# Register the DataFrame as a global temporary view
+df.createGlobalTempView("people")
+ 
+# Global temporary view is tied to a system preserved database `global_temp`
+spark.sql("SELECT * FROM global_temp.people").show()
+# +----+-------+
+# | age|   name|
+# +----+-------+
+# |null|Michael|
+# |  30|   Andy|
+# |  19| Justin|
+# +----+-------+
+ 
+# Global temporary view is cross-session
+spark.newSession().sql("SELECT * FROM global_temp.people").show()
+# +----+-------+
+# | age|   name|
+# +----+-------+
+# |null|Michael|
+# |  30|   Andy|
+# |  19| Justin|
+# +----+-------+
+ 
+#Global Temporary View
+ 
+# Register the DataFrame as a global temporary view
+df.createGlobalTempView("people")
+ 
+# Global temporary view is tied to a system preserved database `global_temp`
+spark.sql("SELECT * FROM global_temp.people").show()
+# +----+-------+
+# | age|   name|
+# +----+-------+
+# |null|Michael|
+# |  30|   Andy|
+# |  19| Justin|
+# +----+-------+
+ 
+# Global temporary view is cross-session
+spark.newSession().sql("SELECT * FROM global_temp.people").show()
+# +----+-------+
+# | age|   name|
+# +----+-------+
+# |null|Michael|
+# |  30|   Andy|
+# |  19| Justin|
+# +----+-------+
+ 
+ 
+#nferring the Schema Using Reflection
+ 
+ 
+from pyspark.sql import Row
+ 
+sc = spark.sparkContext
+ 
+# Load a text file and convert each line to a Row.
+lines = sc.textFile("examples/src/main/resources/people.txt")
+parts = lines.map(lambda l: l.split(","))
+people = parts.map(lambda p: Row(name=p[0], age=int(p[1])))
+ 
+# Infer the schema, and register the DataFrame as a table.
+schemaPeople = spark.createDataFrame(people)
+schemaPeople.createOrReplaceTempView("people")
+ 
+# SQL can be run over DataFrames that have been registered as a table.
+teenagers = spark.sql("SELECT name FROM people WHERE age >= 13 AND age <= 19")
+ 
+# The results of SQL queries are Dataframe objects.
+# rdd returns the content as an :class:`pyspark.RDD` of :class:`Row`.
+teenNames = teenagers.rdd.map(lambda p: "Name: " + p.name).collect()
+for name in teenNames:
+    print(name)
+# Name: Justin
+ 
+#Programmatically Specifying the Schema
+ 
+ 
+# Import data types
+from pyspark.sql.types import *
+ 
+sc = spark.sparkContext
+ 
+# Load a text file and convert each line to a Row.
+lines = sc.textFile("examples/src/main/resources/people.txt")
+parts = lines.map(lambda l: l.split(","))
+# Each line is converted to a tuple.
+people = parts.map(lambda p: (p[0], p[1].strip()))
+ 
+# The schema is encoded in a string.
+schemaString = "name age"
+ 
+fields = [StructField(field_name, StringType(), True) for field_name in schemaString.split()]
+schema = StructType(fields)
+ 
+# Apply the schema to the RDD.
+schemaPeople = spark.createDataFrame(people, schema)
+ 
+# Creates a temporary view using the DataFrame
+schemaPeople.createOrReplaceTempView("people")
+ 
+# SQL can be run over DataFrames that have been registered as a table.
+results = spark.sql("SELECT name FROM people")
+ 
+results.show()
+# +-------+
+# |   name|
+# +-------+
+# |Michael|
+# |   Andy|
+# | Justin|
+# +-------+
+ 
+ 
+#Untyped User-Defined Aggregate Functions
+ 
+ 
+import org.apache.spark.sql.expressions.MutableAggregationBuffer
+import org.apache.spark.sql.expressions.UserDefinedAggregateFunction
+import org.apache.spark.sql.types._
+import org.apache.spark.sql.Row
+import org.apache.spark.sql.SparkSession
+ 
+object MyAverage extends UserDefinedAggregateFunction {
+  // Data types of input arguments of this aggregate function
+  def inputSchema: StructType = StructType(StructField("inputColumn", LongType) :: Nil)
+  // Data types of values in the aggregation buffer
+  def bufferSchema: StructType = {
+    StructType(StructField("sum", LongType) :: StructField("count", LongType) :: Nil)
+  }
+  // The data type of the returned value
+  def dataType: DataType = DoubleType
+  // Whether this function always returns the same output on the identical input
+  def deterministic: Boolean = true
+  // Initializes the given aggregation buffer. The buffer itself is a `Row` that in addition to
+  // standard methods like retrieving a value at an index (e.g., get(), getBoolean()), provides
+  // the opportunity to update its values. Note that arrays and maps inside the buffer are still
+  // immutable.
+  def initialize(buffer: MutableAggregationBuffer): Unit = {
+    buffer(0) = 0L
+    buffer(1) = 0L
+  }
+  // Updates the given aggregation buffer `buffer` with new input data from `input`
+  def update(buffer: MutableAggregationBuffer, input: Row): Unit = {
+    if (!input.isNullAt(0)) {
+      buffer(0) = buffer.getLong(0) + input.getLong(0)
+      buffer(1) = buffer.getLong(1) + 1
+    }
+  }
+  // Merges two aggregation buffers and stores the updated buffer values back to `buffer1`
+  def merge(buffer1: MutableAggregationBuffer, buffer2: Row): Unit = {
+    buffer1(0) = buffer1.getLong(0) + buffer2.getLong(0)
+    buffer1(1) = buffer1.getLong(1) + buffer2.getLong(1)
+  }
+  // Calculates the final result
+  def evaluate(buffer: Row): Double = buffer.getLong(0).toDouble / buffer.getLong(1)
+}
+ 
+// Register the function to access it
+spark.udf.register("myAverage", MyAverage)
+ 
+val df = spark.read.json("examples/src/main/resources/employees.json")
+df.createOrReplaceTempView("employees")
+df.show()
+// +-------+------+
+// |   name|salary|
+// +-------+------+
+// |Michael|  3000|
+// |   Andy|  4500|
+// | Justin|  3500|
+// |  Berta|  4000|
+// +-------+------+
+ 
+val result = spark.sql("SELECT myAverage(salary) as average_salary FROM employees")
+result.show()
+// +--------------+
+// |average_salary|
+// +--------------+
+// |        3750.0|
+// +--------------+
+ 
+#Type-Safe User-Defined Aggregate Functions
+ 
+import org.apache.spark.sql.expressions.Aggregator
+import org.apache.spark.sql.Encoder
+import org.apache.spark.sql.Encoders
+import org.apache.spark.sql.SparkSession
+ 
+case class Employee(name: String, salary: Long)
+case class Average(var sum: Long, var count: Long)
+ 
+object MyAverage extends Aggregator[Employee, Average, Double] {
+  // A zero value for this aggregation. Should satisfy the property that any b + zero = b
+  def zero: Average = Average(0L, 0L)
+  // Combine two values to produce a new value. For performance, the function may modify `buffer`
+  // and return it instead of constructing a new object
+  def reduce(buffer: Average, employee: Employee): Average = {
+    buffer.sum += employee.salary
+    buffer.count += 1
+    buffer
+  }
+  // Merge two intermediate values
+  def merge(b1: Average, b2: Average): Average = {
+    b1.sum += b2.sum
+    b1.count += b2.count
+    b1
+  }
+  // Transform the output of the reduction
+  def finish(reduction: Average): Double = reduction.sum.toDouble / reduction.count
+  // Specifies the Encoder for the intermediate value type
+  def bufferEncoder: Encoder[Average] = Encoders.product
+  // Specifies the Encoder for the final output value type
+  def outputEncoder: Encoder[Double] = Encoders.scalaDouble
+}
+ 
+val ds = spark.read.json("examples/src/main/resources/employees.json").as[Employee]
+ds.show()
+// +-------+------+
+// |   name|salary|
+// +-------+------+
+// |Michael|  3000|
+// |   Andy|  4500|
+// | Justin|  3500|
+// |  Berta|  4000|
+// +-------+------+
+ 
+// Convert the function to a `TypedColumn` and give it a name
+val averageSalary = MyAverage.toColumn.name("average_salary")
+val result = ds.select(averageSalary)
+result.show()
+// +--------------+
+// |average_salary|
+// +--------------+
+// |        3750.0|
+// +--------------+
+ 
+ 
+#Generic Load/Save Functions
+#In the simplest form, the default data source (parquet unless otherwise configured by spark.sql.sources.default) will be used for all operations.
+ 
+df = spark.read.load("examples/src/main/resources/users.parquet")
+df.select("name", "favorite_color").write.save("namesAndFavColors.parquet")
+ 
+df = spark.read.load("examples/src/main/resources/people.json", format="json")
+df.select("name", "age").write.save("namesAndAges.parquet", format="parquet")
+#Find full example code at "examples/src/main/python/sql/datasource.py" in the Spark repo.
+ 
+df = spark.sql("SELECT * FROM parquet.`examples/src/main/resources/users.parquet`")
+ 
+ 
+#Bucketing, Sorting and Partitioning
+ 
+df.write.bucketBy(42, "name").sortBy("age").saveAsTable("people_bucketed")
+Find full example code at "examples/src/main/python/sql/datasource.py" in the Spark repo.
+ 
+df.write.partitionBy("favorite_color").format("parquet").save("namesPartByColor.parquet")
+Find full example code at "examples/src/main/python/sql/datasource.py" in the Spark repo.
+ 
+df = spark.read.parquet("examples/src/main/resources/users.parquet")
+(df
+    .write
+    .partitionBy("favorite_color")
+    .bucketBy(42, "name")
+    .saveAsTable("people_partitioned_bucketed"))
+ 
+#Loading Data Programmatically
+ 
+peopleDF = spark.read.json("examples/src/main/resources/people.json")
+ 
+# DataFrames can be saved as Parquet files, maintaining the schema information.
+peopleDF.write.parquet("people.parquet")
+ 
+# Read in the Parquet file created above.
+# Parquet files are self-describing so the schema is preserved.
+# The result of loading a parquet file is also a DataFrame.
+parquetFile = spark.read.parquet("people.parquet")
+ 
+# Parquet files can also be used to create a temporary view and then used in SQL statements.
+parquetFile.createOrReplaceTempView("parquetFile")
+teenagers = spark.sql("SELECT name FROM parquetFile WHERE age >= 13 AND age <= 19")
+teenagers.show()
+# +------+
+# |  name|
+# +------+
+# |Justin|
+# +------+
+ 
+ 
+#Schema Merging
+ 
+from pyspark.sql import Row
+ 
+# spark is from the previous example.
+# Create a simple DataFrame, stored into a partition directory
+sc = spark.sparkContext
+ 
+squaresDF = spark.createDataFrame(sc.parallelize(range(1, 6))
+                                  .map(lambda i: Row(single=i, double=i ** 2)))
+squaresDF.write.parquet("data/test_table/key=1")
+ 
+# Create another DataFrame in a new partition directory,
+# adding a new column and dropping an existing column
+cubesDF = spark.createDataFrame(sc.parallelize(range(6, 11))
+                                .map(lambda i: Row(single=i, triple=i ** 3)))
+cubesDF.write.parquet("data/test_table/key=2")
+ 
+# Read the partitioned table
+mergedDF = spark.read.option("mergeSchema", "true").parquet("data/test_table")
+mergedDF.printSchema()
+ 
+# The final schema consists of all 3 columns in the Parquet files together
+# with the partitioning column appeared in the partition directory paths.
+# root
+#  |-- double: long (nullable = true)
+#  |-- single: long (nullable = true)
+#  |-- triple: long (nullable = true)
+#  |-- key: integer (nullable = true)
+ 
+ 
+#Metadata Refreshing
+ 
+# spark is an existing SparkSession
+spark.catalog.refreshTable("my_table")
+ 
+#JSON Datasets
+ 
+# spark is from the previous example.
+sc = spark.sparkContext
+ 
+# A JSON dataset is pointed to by path.
+# The path can be either a single text file or a directory storing text files
+path = "examples/src/main/resources/people.json"
+peopleDF = spark.read.json(path)
+ 
+# The inferred schema can be visualized using the printSchema() method
+peopleDF.printSchema()
+# root
+#  |-- age: long (nullable = true)
+#  |-- name: string (nullable = true)
+ 
+# Creates a temporary view using the DataFrame
+peopleDF.createOrReplaceTempView("people")
+ 
+# SQL statements can be run by using the sql methods provided by spark
+teenagerNamesDF = spark.sql("SELECT name FROM people WHERE age BETWEEN 13 AND 19")
+teenagerNamesDF.show()
+# +------+
+# |  name|
+# +------+
+# |Justin|
+# +------+
+ 
+# Alternatively, a DataFrame can be created for a JSON dataset represented by
+# an RDD[String] storing one JSON object per string
+jsonStrings = ['{"name":"Yin","address":{"city":"Columbus","state":"Ohio"}}']
+otherPeopleRDD = sc.parallelize(jsonStrings)
+otherPeople = spark.read.json(otherPeopleRDD)
+otherPeople.show()
+# +---------------+----+
+# |        address|name|
+# +---------------+----+
+# |[Columbus,Ohio]| Yin|
+# +---------------+----+
+ 
+ 
+#Hive Tables
+ 
+from os.path import expanduser, join, abspath
+ 
+from pyspark.sql import SparkSession
+from pyspark.sql import Row
+ 
+# warehouse_location points to the default location for managed databases and tables
+warehouse_location = abspath('spark-warehouse')
+ 
+spark = SparkSession \
+    .builder \
+    .appName("Python Spark SQL Hive integration example") \
+    .config("spark.sql.warehouse.dir", warehouse_location) \
+    .enableHiveSupport() \
+    .getOrCreate()
+ 
+# spark is an existing SparkSession
+spark.sql("CREATE TABLE IF NOT EXISTS src (key INT, value STRING) USING hive")
+spark.sql("LOAD DATA LOCAL INPATH 'examples/src/main/resources/kv1.txt' INTO TABLE src")
+ 
+# Queries are expressed in HiveQL
+spark.sql("SELECT * FROM src").show()
+# +---+-------+
+# |key|  value|
+# +---+-------+
+# |238|val_238|
+# | 86| val_86|
+# |311|val_311|
+# ...
+ 
+# Aggregation queries are also supported.
+spark.sql("SELECT COUNT(*) FROM src").show()
+# +--------+
+# |count(1)|
+# +--------+
+# |    500 |
+# +--------+
+ 
+# The results of SQL queries are themselves DataFrames and support all normal functions.
+sqlDF = spark.sql("SELECT key, value FROM src WHERE key < 10 ORDER BY key")
+ 
+# The items in DataFrames are of type Row, which allows you to access each column by ordinal.
+stringsDS = sqlDF.rdd.map(lambda row: "Key: %d, Value: %s" % (row.key, row.value))
+for record in stringsDS.collect():
+    print(record)
+# Key: 0, Value: val_0
+# Key: 0, Value: val_0
+# Key: 0, Value: val_0
+# ...
+ 
+# You can also use DataFrames to create temporary views within a SparkSession.
+Record = Row("key", "value")
+recordsDF = spark.createDataFrame([Record(i, "val_" + str(i)) for i in range(1, 101)])
+recordsDF.createOrReplaceTempView("records")
+ 
+# Queries can then join DataFrame data with data stored in Hive.
+spark.sql("SELECT * FROM records r JOIN src s ON r.key = s.key").show()
+# +---+------+---+------+
+# |key| value|key| value|
+# +---+------+---+------+
+# |  2| val_2|  2| val_2|
+# |  4| val_4|  4| val_4|
+# |  5| val_5|  5| val_5|
+ 
+#GDBC TO OTHER DATABASES
+ 
+# Note: JDBC loading and saving can be achieved via either the load/save or jdbc methods
+# Loading data from a JDBC source
+jdbcDF = spark.read \
+    .format("jdbc") \
+    .option("url", "jdbc:postgresql:dbserver") \
+    .option("dbtable", "schema.tablename") \
+    .option("user", "username") \
+    .option("password", "password") \
+    .load()
+ 
+jdbcDF2 = spark.read \
+    .jdbc("jdbc:postgresql:dbserver", "schema.tablename",
+          properties={"user": "username", "password": "password"})
+ 
+# Saving data to a JDBC source
+jdbcDF.write \
+    .format("jdbc") \
+    .option("url", "jdbc:postgresql:dbserver") \
+    .option("dbtable", "schema.tablename") \
+    .option("user", "username") \
+    .option("password", "password") \
+    .save()
+ 
+jdbcDF2.write \
+    .jdbc("jdbc:postgresql:dbserver", "schema.tablename",
+          properties={"user": "username", "password": "password"})
+ 
+# Specifying create table column data types on write
+jdbcDF.write \
+    .option("createTableColumnTypes", "name CHAR(64), comments VARCHAR(1024)") \
+    .jdbc("jdbc:postgresql:dbserver", "schema.tablename",
+          properties={"user": "username", "password": "password"})
+ 
+#Distributed SQL Engine
+environment variables, i.e.:
+ 
+export HIVE_SERVER2_THRIFT_PORT=<listening-port>
+export HIVE_SERVER2_THRIFT_BIND_HOST=<listening-host>
+./sbin/start-thriftserver.sh \
+  --master <master-uri> \
+  ...
+or system properties:
+ 
+hive.server2.transport.mode - Set this to value: http
+hive.server2.thrift.http.port - HTTP port number to listen on; default is 10001
+hive.server2.http.endpoint - HTTP endpoint; default is cliservice
+ 
+#DataFrame.groupBy retains grouping columns
+ 
+import pyspark.sql.functions as func
+ 
+# In 1.3.x, in order for the grouping column "department" to show up,
+# it must be included explicitly as part of the agg function call.
+df.groupBy("department").agg(df["department"], func.max("age"), func.sum("expense"))
+ 
+# In 1.4+, grouping column "department" is included automatically.
+df.groupBy("department").agg(func.max("age"), func.sum("expense"))
+ 
+# Revert to 1.3.x behavior (not retaining grouping column) by:
+sqlContext.setConf("spark.sql.retainGroupColumns", "false")
+ 
+ 
